@@ -58,6 +58,7 @@ TEST_DATA = (
     (validate_email, 'email@[::ffff:127.0.0.256]', ValidationError),
     (validate_email, 'example@invalid-.com', ValidationError),
     (validate_email, 'example@-invalid.com', ValidationError),
+    (validate_email, 'example@invalid.com-', ValidationError),
     (validate_email, 'example@inv-.alid-.com', ValidationError),
     (validate_email, 'example@inv-.-alid.com', ValidationError),
     (validate_email, 'test@example.com\n\n<script src="x.js">', ValidationError),
@@ -65,6 +66,9 @@ TEST_DATA = (
     (validate_email, '"\\\011"@here.com', None),
     (validate_email, '"\\\012"@here.com', ValidationError),
     (validate_email, 'trailingdot@shouldfail.com.', ValidationError),
+    # Max length of domain name in email is 249 (see validator for calculation)
+    (validate_email, 'a@%s.us' % ('a' * 249), None),
+    (validate_email, 'a@%s.us' % ('a' * 250), ValidationError),
 
     (validate_slug, 'slug-ok', None),
     (validate_slug, 'longer-slug-still-ok', None),
@@ -88,7 +92,7 @@ TEST_DATA = (
     (validate_ipv4_address, '25.1 .1.1', ValidationError),
 
     # validate_ipv6_address uses django.utils.ipv6, which
-    # is tested in much greater detail in it's own testcase
+    # is tested in much greater detail in its own testcase
     (validate_ipv6_address, 'fe80::1', None),
     (validate_ipv6_address, '::1', None),
     (validate_ipv6_address, '1:2:3:4:5:6:7:8', None),
@@ -174,6 +178,7 @@ TEST_DATA = (
     (URLValidator(), 'http://.com', ValidationError),
     (URLValidator(), 'http://invalid-.com', ValidationError),
     (URLValidator(), 'http://-invalid.com', ValidationError),
+    (URLValidator(), 'http://invalid.com-', ValidationError),
     (URLValidator(), 'http://inv-.alid-.com', ValidationError),
     (URLValidator(), 'http://inv-.-alid.com', ValidationError),
     (URLValidator(), 'file://localhost/path', ValidationError),
@@ -198,6 +203,10 @@ TEST_DATA = (
     (RegexValidator(re.compile('x'), inverse_match=True), 'y', None),
     (RegexValidator('x', inverse_match=True), 'x', ValidationError),
     (RegexValidator(re.compile('x'), inverse_match=True), 'x', ValidationError),
+
+    (RegexValidator('x', flags=re.IGNORECASE), 'y', ValidationError),
+    (RegexValidator('a'), 'A', ValidationError),
+    (RegexValidator('a', flags=re.IGNORECASE), 'A', None),
 )
 
 
@@ -250,6 +259,14 @@ class TestSimpleValidators(TestCase):
         self.assertEqual(str(v), str_prefix("{%(_)s'first': [%(_)s'First Problem']}"))
         self.assertEqual(repr(v), str_prefix("ValidationError({%(_)s'first': [%(_)s'First Problem']})"))
 
+    def test_regex_validator_flags(self):
+        try:
+            RegexValidator(re.compile('a'), flags=re.IGNORECASE)
+        except TypeError:
+            pass
+        else:
+            self.fail("TypeError not raised when flags and pre-compiled regex in RegexValidator")
+
 test_counter = 0
 for validator, value, expected in TEST_DATA:
     name, method = create_simple_test_method(validator, expected, value, test_counter)
@@ -282,6 +299,33 @@ class TestValidatorEquality(TestCase):
         self.assertNotEqual(
             RegexValidator(r'^(?:[a-z0-9\.\-]*)://', "oh noes", "invalid"),
             RegexValidator(r'^(?:[a-z0-9\.\-]*)://'),
+        )
+
+        self.assertNotEqual(
+            RegexValidator('', flags=re.IGNORECASE),
+            RegexValidator(''),
+        )
+
+        self.assertNotEqual(
+            RegexValidator(''),
+            RegexValidator('', inverse_match=True),
+        )
+
+    def test_regex_equality_nocache(self):
+        pattern = r'^(?:[a-z0-9\.\-]*)://'
+        left = RegexValidator(pattern)
+        re.purge()
+        right = RegexValidator(pattern)
+
+        self.assertEqual(
+            left,
+            right,
+        )
+
+    def test_regex_equality_blank(self):
+        self.assertEqual(
+            RegexValidator(),
+            RegexValidator(),
         )
 
     def test_email_equality(self):

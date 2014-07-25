@@ -6,12 +6,10 @@ from __future__ import unicode_literals
 
 import copy
 from itertools import chain
-import warnings
 
 from django.conf import settings
 from django.forms.utils import flatatt, to_current_timezone
 from django.utils.datastructures import MultiValueDict, MergeDict
-from django.utils.deprecation import RemovedInDjango18Warning
 from django.utils.encoding import force_text, python_2_unicode_compatible
 from django.utils.html import conditional_escape, format_html
 from django.utils.translation import ugettext_lazy
@@ -186,14 +184,6 @@ class Widget(six.with_metaclass(MediaDefiningClass)):
     @property
     def is_hidden(self):
         return self.input_type == 'hidden' if hasattr(self, 'input_type') else False
-
-    @is_hidden.setter
-    def is_hidden(self, *args):
-        warnings.warn(
-            "`is_hidden` property is now read-only (and checks `input_type`). "
-            "Please update your code.",
-            RemovedInDjango18Warning, stacklevel=2
-        )
 
     def subwidgets(self, name, value, attrs=None, choices=()):
         """
@@ -429,6 +419,7 @@ class Textarea(Widget):
 
 class DateTimeBaseInput(TextInput):
     format_key = ''
+    supports_microseconds = False
 
     def __init__(self, attrs=None, format=None):
         super(DateTimeBaseInput, self).__init__(attrs)
@@ -634,13 +625,6 @@ class RadioChoiceInput(ChoiceInput):
         self.value = force_text(self.value)
 
 
-class RadioInput(RadioChoiceInput):
-    def __init__(self, *args, **kwargs):
-        msg = "RadioInput has been deprecated. Use RadioChoiceInput instead."
-        warnings.warn(msg, RemovedInDjango18Warning, stacklevel=2)
-        super(RadioInput, self).__init__(*args, **kwargs)
-
-
 class CheckboxChoiceInput(ChoiceInput):
     input_type = 'checkbox'
 
@@ -659,6 +643,8 @@ class ChoiceFieldRenderer(object):
     """
 
     choice_input_class = None
+    outer_html = '<ul{id_attr}>{content}</ul>'
+    inner_html = '<li>{choice_value}{sub_widgets}</li>'
 
     def __init__(self, name, value, attrs, choices):
         self.name = name
@@ -680,8 +666,7 @@ class ChoiceFieldRenderer(object):
         item in the list will get an id of `$id_$i`).
         """
         id_ = self.attrs.get('id', None)
-        start_tag = format_html('<ul id="{0}">', id_) if id_ else '<ul>'
-        output = [start_tag]
+        output = []
         for i, choice in enumerate(self.choices):
             choice_value, choice_label = choice
             if isinstance(choice_label, (tuple, list)):
@@ -693,14 +678,16 @@ class ChoiceFieldRenderer(object):
                                                       attrs=attrs_plus,
                                                       choices=choice_label)
                 sub_ul_renderer.choice_input_class = self.choice_input_class
-                output.append(format_html('<li>{0}{1}</li>', choice_value,
-                                          sub_ul_renderer.render()))
+                output.append(format_html(self.inner_html, choice_value=choice_value,
+                                          sub_widgets=sub_ul_renderer.render()))
             else:
                 w = self.choice_input_class(self.name, self.value,
                                             self.attrs.copy(), choice, i)
-                output.append(format_html('<li>{0}</li>', force_text(w)))
-        output.append('</ul>')
-        return mark_safe('\n'.join(output))
+                output.append(format_html(self.inner_html,
+                                          choice_value=force_text(w), sub_widgets=''))
+        return format_html(self.outer_html,
+                           id_attr=format_html(' id="{0}"', id_) if id_ else '',
+                           content=mark_safe('\n'.join(output)))
 
 
 class RadioFieldRenderer(ChoiceFieldRenderer):
@@ -863,6 +850,7 @@ class SplitDateTimeWidget(MultiWidget):
     """
     A Widget that splits datetime input into two <input type="text"> boxes.
     """
+    supports_microseconds = False
 
     def __init__(self, attrs=None, date_format=None, time_format=None):
         widgets = (DateInput(attrs=attrs, format=date_format),

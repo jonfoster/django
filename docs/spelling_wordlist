@@ -1,3 +1,4 @@
+à
 Aalto
 accessor
 Aceh
@@ -23,6 +24,7 @@ attr
 auth
 autoclobber
 autocommit
+autocompletion
 autoconf
 autodetect
 autodetectable
@@ -152,6 +154,7 @@ dirmod
 distro
 divisibleby
 django
+Django's
 djangojs
 djangonaut
 djangoproject
@@ -222,6 +225,7 @@ geo
 geoip
 geolibs
 geolocalized
+geolocated
 geolocation
 geoquerysets
 geospatial
@@ -242,6 +246,7 @@ gunicorn
 Gunicorn
 gz
 GZip
+gzipped
 hackish
 handheld
 hardcode
@@ -506,7 +511,6 @@ roadmap
 Roald
 rss
 runfcgi
-runnning
 runserver
 safeseq
 Sandvik
@@ -520,6 +524,7 @@ screenshots
 sdist
 semimajor
 semiminor
+serializability
 serializable
 serializer
 serializers
@@ -555,6 +560,7 @@ sqlflush
 sqlindexes
 sqlmigrate
 sqlsequencereset
+squashmigrations
 ssi
 stacktrace
 startswith
@@ -633,6 +639,8 @@ ubuntu
 Ubuntuusers
 ul
 umask
+unassigning
+unapplied
 unapply
 unapplying
 uncheck
@@ -661,6 +669,7 @@ unrendered
 Unreviewed
 unsanitized
 unsets
+unsquashed
 untar
 url
 urlencode

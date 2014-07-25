@@ -4,12 +4,11 @@ from __future__ import unicode_literals
 import datetime
 import decimal
 import unittest
-import warnings
 
 from django.template.defaultfilters import (
     add, addslashes, capfirst, center, cut, date, default, default_if_none,
     dictsort, dictsortreversed, divisibleby, escape, escapejs_filter,
-    filesizeformat, first, fix_ampersands_filter, floatformat, force_escape,
+    filesizeformat, first, floatformat, force_escape,
     get_digit, iriencode, join, length, length_is, linebreaksbr,
     linebreaks_filter, linenumbers, ljust, lower, make_list,
     phone2numeric_filter, pluralize, removetags, rjust, slice_filter, slugify,
@@ -20,9 +19,8 @@ from django.template.defaultfilters import (
 from django.test import TestCase
 from django.utils import six
 from django.utils import translation
-from django.utils.deprecation import RemovedInDjango18Warning
 from django.utils.encoding import python_2_unicode_compatible
-from django.utils.safestring import SafeData
+from django.utils.safestring import mark_safe, SafeData
 
 
 class DefaultFiltersTests(TestCase):
@@ -124,12 +122,6 @@ class DefaultFiltersTests(TestCase):
         self.assertEqual(
             escapejs_filter('paragraph separator:\u2029and line separator:\u2028'),
             'paragraph separator:\\u2029and line separator:\\u2028')
-
-    def test_fix_ampersands(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RemovedInDjango18Warning)
-            self.assertEqual(fix_ampersands_filter('Jack & Jill & Jeroboam'),
-                             'Jack &amp; Jill &amp; Jeroboam')
 
     def test_linenumbers(self):
         self.assertEqual(linenumbers('line 1\nline 2'),
@@ -272,8 +264,12 @@ class DefaultFiltersTests(TestCase):
             '<a href="http://www.google.com" rel="nofollow">www.google.com</a>')
         self.assertEqual(urlize('djangoproject.org'),
             '<a href="http://djangoproject.org" rel="nofollow">djangoproject.org</a>')
+        self.assertEqual(urlize('djangoproject.org/'),
+            '<a href="http://djangoproject.org/" rel="nofollow">djangoproject.org/</a>')
         self.assertEqual(urlize('info@djangoproject.org'),
             '<a href="mailto:info@djangoproject.org">info@djangoproject.org</a>')
+        self.assertEqual(urlize('some.organization'),
+            'some.organization'),
 
         # Check urlize with https addresses
         self.assertEqual(urlize('https://google.com'),
@@ -378,16 +374,15 @@ class DefaultFiltersTests(TestCase):
         self.assertEqual(wordcount('oneword'), 1)
         self.assertEqual(wordcount('lots of words'), 3)
 
+    def test_wordwrap(self):
         self.assertEqual(wordwrap('this is a long paragraph of text that '
-            'really needs to be wrapped I\'m afraid', 14),
-            "this is a long\nparagraph of\ntext that\nreally needs\nto be "
+            "really needs to be wrapped I'm afraid", 14),
+            'this is a long\nparagraph of\ntext that\nreally needs\nto be '
             "wrapped\nI'm afraid")
-
         self.assertEqual(wordwrap('this is a short paragraph of text.\n  '
             'But this line should be indented', 14),
             'this is a\nshort\nparagraph of\ntext.\n  But this\nline '
             'should be\nindented')
-
         self.assertEqual(wordwrap('this is a short paragraph of text.\n  '
             'But this line should be indented', 15), 'this is a short\n'
             'paragraph of\ntext.\n  But this line\nshould be\nindented')
@@ -503,6 +498,7 @@ class DefaultFiltersTests(TestCase):
 
     def test_length(self):
         self.assertEqual(length('1234'), 4)
+        self.assertEqual(length(mark_safe('1234')), 4)
         self.assertEqual(length([1, 2, 3, 4]), 4)
         self.assertEqual(length_is([], 0), True)
         self.assertEqual(length_is([], 1), False)
@@ -662,6 +658,14 @@ class DefaultFiltersTests(TestCase):
         self.assertEqual(pluralize(1), '')
         self.assertEqual(pluralize(0), 's')
         self.assertEqual(pluralize(2), 's')
+
+        # Ticket #22798
+        self.assertEqual(pluralize(0.5), 's')
+        self.assertEqual(pluralize(1.5), 's')
+
+        self.assertEqual(pluralize(decimal.Decimal(1)), '')
+        self.assertEqual(pluralize(decimal.Decimal(0)), 's')
+        self.assertEqual(pluralize(decimal.Decimal(2)), 's')
         self.assertEqual(pluralize([1]), '')
         self.assertEqual(pluralize([]), 's')
         self.assertEqual(pluralize([1, 2, 3]), 's')

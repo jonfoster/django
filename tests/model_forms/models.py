@@ -13,7 +13,7 @@ import os
 import tempfile
 
 from django.core import validators
-from django.core.exceptions import ImproperlyConfigured, ValidationError
+from django.core.exceptions import ValidationError
 from django.core.files.storage import FileSystemStorage
 from django.db import models
 from django.utils import six
@@ -154,7 +154,7 @@ class FilePathModel(models.Model):
 
 
 try:
-    from django.utils.image import Image  # NOQA: detect if Pillow is installed
+    from PIL import Image  # NOQA: detect if Pillow is installed
 
     test_images = True
 
@@ -193,7 +193,7 @@ try:
 
         def __str__(self):
             return self.description
-except ImproperlyConfigured:
+except ImportError:
     test_images = False
 
 
@@ -369,11 +369,6 @@ class ColourfulItem(models.Model):
     colours = models.ManyToManyField(Colour)
 
 
-class ArticleStatusNote(models.Model):
-    name = models.CharField(max_length=20)
-    status = models.ManyToManyField(ArticleStatus)
-
-
 class CustomErrorMessage(models.Model):
     name1 = models.CharField(max_length=50,
         validators=[validators.validate_slug],
@@ -406,3 +401,9 @@ class Character(models.Model):
 class StumpJoke(models.Model):
     most_recently_fooled = models.ForeignKey(Character, limit_choices_to=today_callable_dict, related_name="+")
     has_fooled_today = models.ManyToManyField(Character, limit_choices_to=today_callable_q, related_name="+")
+
+
+# Model for #13776
+class Student(models.Model):
+    character = models.ForeignKey(Character)
+    study = models.CharField(max_length=30)

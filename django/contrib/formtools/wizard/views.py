@@ -369,13 +369,13 @@ class WizardView(TemplateView):
         """
         Returns a dictionary which will be passed to the form for `step`
         as `initial`. If no initial data was provided while initializing the
-        form wizard, a empty dictionary will be returned.
+        form wizard, an empty dictionary will be returned.
         """
         return self.initial_dict.get(step, {})
 
     def get_form_instance(self, step):
         """
-        Returns a object which will be passed to the form for `step`
+        Returns an object which will be passed to the form for `step`
         as `instance`. If no instance object was provided while initializing
         the form wizard, None will be returned.
         """
@@ -538,8 +538,7 @@ class WizardView(TemplateView):
         context variables are:
 
          * all extra data stored in the storage backend
-         * `form` - form instance of the current step
-         * `wizard` - the wizard instance itself
+         * `wizard` - a dictionary representation of the wizard instance
 
         Example:
 

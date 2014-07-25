@@ -10,7 +10,7 @@ except ImportError:
 
 from django.contrib.syndication import views
 from django.core.exceptions import ImproperlyConfigured
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.test.utils import requires_tz_support
 from django.utils.feedgenerator import rfc2822_date, rfc3339_date
 from django.utils import timezone
@@ -50,11 +50,11 @@ class FeedTestCase(TestCase):
 ######################################
 
 
+@override_settings(ROOT_URLCONF='syndication_tests.urls')
 class SyndicationFeedTest(FeedTestCase):
     """
     Tests for the high-level syndication feed framework.
     """
-    urls = 'syndication_tests.urls'
 
     def test_rss2_feed(self):
         """
@@ -317,7 +317,7 @@ class SyndicationFeedTest(FeedTestCase):
         Test that datetimes are correctly converted to the local time zone.
         """
         # Naive date times passed in get converted to the local time zone, so
-        # check the recived zone offset against the local offset.
+        # check the received zone offset against the local offset.
         response = self.client.get('/syndication/naive-dates/')
         doc = minidom.parseString(response.content)
         updated = doc.getElementsByTagName('updated')[0].firstChild.wholeText
@@ -386,7 +386,7 @@ class SyndicationFeedTest(FeedTestCase):
 
     def test_item_link_error(self):
         """
-        Test that a ImproperlyConfigured is raised if no link could be found
+        Test that an ImproperlyConfigured is raised if no link could be found
         for the item(s).
         """
         self.assertRaises(ImproperlyConfigured,

@@ -103,9 +103,14 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     has_bulk_insert = True
     can_combine_inserts_with_and_without_auto_increment_pk = False
     supports_foreign_keys = False
-    supports_check_constraints = False
+    supports_column_check_constraints = False
     autocommits_when_autocommit_is_off = True
+    can_introspect_decimal_field = False
+    can_introspect_positive_integer_field = True
+    can_introspect_small_integer_field = True
+    supports_transactions = True
     atomic_transactions = False
+    can_rollback_ddl = True
     supports_paramstyle_pyformat = False
     supports_sequence_reset = False
 
@@ -292,6 +297,10 @@ class DatabaseOperations(BaseDatabaseOperations):
             return 'django_power(%s)' % ','.join(sub_expressions)
         return super(DatabaseOperations, self).combine_expression(connector, sub_expressions)
 
+    def integer_field_range(self, internal_type):
+        # SQLite doesn't enforce any integer constraints
+        return (None, None)
+
 
 class DatabaseWrapper(BaseDatabaseWrapper):
     vendor = 'sqlite'
@@ -407,7 +416,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             level = ''
         # 'isolation_level' is a misleading API.
         # SQLite always runs at the SERIALIZABLE isolation level.
-        self.connection.isolation_level = level
+        with self.wrap_database_errors:
+            self.connection.isolation_level = level
 
     def check_constraints(self, table_names=None):
         """

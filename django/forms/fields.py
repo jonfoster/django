@@ -61,7 +61,7 @@ class Field(object):
 
     def __init__(self, required=True, widget=None, label=None, initial=None,
                  help_text='', error_messages=None, show_hidden_initial=False,
-                 validators=[], localize=False):
+                 validators=[], localize=False, label_suffix=None):
         # required -- Boolean that specifies whether the field is required.
         #             True by default.
         # widget -- A Widget class, or instance of a Widget class, that should
@@ -79,11 +79,14 @@ class Field(object):
         #                   messages that the field will raise.
         # show_hidden_initial -- Boolean that specifies if it is needed to render a
         #                        hidden widget with initial value after widget.
-        # validators -- List of addtional validators to use
+        # validators -- List of additional validators to use
         # localize -- Boolean that specifies if the field should be localized.
+        # label_suffix -- Suffix to be added to the label. Overrides
+        #                 form's label_suffix.
         self.required, self.label, self.initial = required, label, initial
         self.show_hidden_initial = show_hidden_initial
         self.help_text = help_text
+        self.label_suffix = label_suffix
         widget = widget or self.widget
         if isinstance(widget, type):
             widget = widget()
@@ -187,7 +190,7 @@ class Field(object):
         Return True if data differs from initial.
         """
         # For purposes of seeing whether something has changed, None is
-        # the same as an empty string, if the data or inital value we get
+        # the same as an empty string, if the data or initial value we get
         # is None, replace it w/ ''.
         initial_value = initial if initial is not None else ''
         try:
@@ -527,7 +530,7 @@ class RegexField(CharField):
         'Enter a valid value' is too generic for you.
         """
         # error_message is just kept for backwards compatibility:
-        if error_message:
+        if error_message is not None:
             error_messages = kwargs.get('error_messages') or {}
             error_messages['invalid'] = error_message
             kwargs['error_messages'] = error_messages
@@ -641,7 +644,7 @@ class ImageField(FileField):
         if f is None:
             return None
 
-        from django.utils.image import Image
+        from PIL import Image
 
         # We need to get a file object for Pillow. We might have a path or we might
         # have to read the data into memory.
@@ -659,7 +662,7 @@ class ImageField(FileField):
             # verify() must be called immediately after the constructor.
             Image.open(file).verify()
         except Exception:
-            # Pillow (or PIL) doesn't recognize it as an image.
+            # Pillow doesn't recognize it as an image.
             six.reraise(ValidationError, ValidationError(
                 self.error_messages['invalid_image'],
                 code='invalid_image',
@@ -704,9 +707,6 @@ class URLField(CharField):
                 # Rebuild the url_fields list, since the domain segment may now
                 # contain the path too.
                 url_fields = split_url(urlunsplit(url_fields))
-            if not url_fields[2]:
-                # the path portion may need to be added before query params
-                url_fields[2] = '/'
             value = urlunsplit(url_fields)
         return value
 

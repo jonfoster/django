@@ -458,7 +458,7 @@ level or handlers that are installed.
 This logging does not include framework-level initialization (e.g.
 ``SET TIMEZONE``) or transaction management queries (e.g. ``BEGIN``,
 ``COMMIT``, and ``ROLLBACK``). Turn on query logging in your database if you
-wish the view all database queries.
+wish to view all database queries.
 
 ``django.security.*``
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -530,8 +530,6 @@ Python logging module.
     information over email. You may also explicitly designate certain
     sensitive information to be filtered out of error reports -- learn more on
     :ref:`Filtering error reports<filtering-error-reports>`.
-
-    .. versionadded:: 1.6
 
     By setting the ``email_backend`` argument of ``AdminEmailHandler``, the
     :ref:`email backend <topic-email-backends>` that is being used by the

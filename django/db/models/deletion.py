@@ -138,9 +138,9 @@ class Collector(object):
                 include_hidden=True, include_proxy_eq=True):
             if related.field.rel.on_delete is not DO_NOTHING:
                 return False
-        # GFK deletes
-        for relation in opts.many_to_many:
-            if not relation.rel.through:
+        for field in model._meta.virtual_fields:
+            if hasattr(field, 'bulk_related_objects'):
+                # It's something like generic foreign key.
                 return False
         return True
 
@@ -249,7 +249,7 @@ class Collector(object):
         # end of a transaction.
         self.sort()
 
-        with transaction.commit_on_success_unless_managed(using=self.using):
+        with transaction.atomic(using=self.using, savepoint=False):
             # send pre_delete signals
             for model, obj in self.instances_with_model():
                 if not model._meta.auto_created:

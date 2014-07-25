@@ -4,12 +4,13 @@ import unittest
 
 from django.test import TransactionTestCase
 from django.db import connection, DatabaseError, IntegrityError, OperationalError
-from django.db.models.fields import IntegerField, TextField, CharField, SlugField, BooleanField
+from django.db.models.fields import IntegerField, TextField, CharField, SlugField, BooleanField, BinaryField
 from django.db.models.fields.related import ManyToManyField, ForeignKey
 from django.db.transaction import atomic
 from .models import (Author, AuthorWithM2M, Book, BookWithLongName,
     BookWithSlug, BookWithM2M, Tag, TagIndexed, TagM2MTest, TagUniqueRename,
-    UniqueTest, Thing, TagThrough, BookWithM2MThrough)
+    UniqueTest, Thing, TagThrough, BookWithM2MThrough, AuthorTag, AuthorWithM2MThrough,
+    AuthorWithEvenLongerName)
 
 
 class SchemaTests(TransactionTestCase):
@@ -26,7 +27,7 @@ class SchemaTests(TransactionTestCase):
     models = [
         Author, AuthorWithM2M, Book, BookWithLongName, BookWithSlug,
         BookWithM2M, Tag, TagIndexed, TagM2MTest, TagUniqueRename, UniqueTest,
-        Thing, TagThrough, BookWithM2MThrough
+        Thing, TagThrough, BookWithM2MThrough, AuthorWithEvenLongerName
     ]
 
     # Utility functions
@@ -231,6 +232,65 @@ class SchemaTests(TransactionTestCase):
         else:
             self.assertEqual(field_type, 'BooleanField')
 
+    def test_add_field_default_transform(self):
+        """
+        Tests adding fields to models with a default that is not directly
+        valid in the database (#22581)
+        """
+
+        class TestTransformField(IntegerField):
+
+            # Weird field that saves the count of items in its value
+            def get_default(self):
+                return self.default
+
+            def get_prep_value(self, value):
+                if value is None:
+                    return 0
+                return len(value)
+
+        # Create the table
+        with connection.schema_editor() as editor:
+            editor.create_model(Author)
+        # Add some rows of data
+        Author.objects.create(name="Andrew", height=30)
+        Author.objects.create(name="Andrea")
+        # Add the field with a default it needs to cast (to string in this case)
+        new_field = TestTransformField(default={1: 2})
+        new_field.set_attributes_from_name("thing")
+        with connection.schema_editor() as editor:
+            editor.add_field(
+                Author,
+                new_field,
+            )
+        # Ensure the field is there
+        columns = self.column_classes(Author)
+        field_type, field_info = columns['thing']
+        self.assertEqual(field_type, 'IntegerField')
+        # Make sure the values were transformed correctly
+        self.assertEqual(Author.objects.extra(where=["thing = 1"]).count(), 2)
+
+    def test_add_field_binary(self):
+        """
+        Tests binary fields get a sane default (#22851)
+        """
+        # Create the table
+        with connection.schema_editor() as editor:
+            editor.create_model(Author)
+        # Add the new field
+        new_field = BinaryField(blank=True)
+        new_field.set_attributes_from_name("bits")
+        with connection.schema_editor() as editor:
+            editor.add_field(
+                Author,
+                new_field,
+            )
+        # Ensure the field is right afterwards
+        columns = self.column_classes(Author)
+        # MySQL annoyingly uses the same backend, so it'll come back as one of
+        # these two types.
+        self.assertIn(columns['bits'][0], ("BinaryField", "TextField"))
+
     def test_alter(self):
         """
         Tests simple altering of fields
@@ -347,6 +407,15 @@ class SchemaTests(TransactionTestCase):
             # Ensure there is now an m2m table there
             columns = self.column_classes(new_field.rel.through)
             self.assertEqual(columns['tagm2mtest_id'][0], "IntegerField")
+
+            # "Alter" the field. This should not rename the DB table to itself.
+            with connection.schema_editor() as editor:
+                editor.alter_field(
+                    Author,
+                    new_field,
+                    new_field,
+                )
+
             # Remove the M2M table again
             with connection.schema_editor() as editor:
                 editor.remove_field(
@@ -358,6 +427,30 @@ class SchemaTests(TransactionTestCase):
         finally:
             # Cleanup model states
             AuthorWithM2M._meta.local_many_to_many.remove(new_field)
+
+    def test_m2m_through_alter(self):
+        """
+        Tests altering M2Ms with explicit through models (should no-op)
+        """
+        # Create the tables
+        with connection.schema_editor() as editor:
+            editor.create_model(AuthorTag)
+            editor.create_model(AuthorWithM2MThrough)
+            editor.create_model(TagM2MTest)
+        # Ensure the m2m table is there
+        self.assertEqual(len(self.column_classes(AuthorTag)), 3)
+        # "Alter" the field's blankness. This should not actually do anything.
+        with connection.schema_editor() as editor:
+            old_field = AuthorWithM2MThrough._meta.get_field_by_name("tags")[0]
+            new_field = ManyToManyField("schema.TagM2MTest", related_name="authors", through="AuthorTag")
+            new_field.contribute_to_class(AuthorWithM2MThrough, "tags")
+            editor.alter_field(
+                Author,
+                old_field,
+                new_field,
+            )
+        # Ensure the m2m table is still there
+        self.assertEqual(len(self.column_classes(AuthorTag)), 3)
 
     def test_m2m_repoint(self):
         """
@@ -407,7 +500,7 @@ class SchemaTests(TransactionTestCase):
             BookWithM2M._meta.local_many_to_many.remove(new_field)
             del BookWithM2M._meta._m2m_cache
 
-    @unittest.skipUnless(connection.features.supports_check_constraints, "No check constraints")
+    @unittest.skipUnless(connection.features.supports_column_check_constraints, "No check constraints")
     def test_check_constraints(self):
         """
         Tests creating/deleting CHECK constraints
@@ -518,7 +611,7 @@ class SchemaTests(TransactionTestCase):
         UniqueTest.objects.create(year=2011, slug="bar")
         self.assertRaises(IntegrityError, UniqueTest.objects.create, year=2012, slug="foo")
         UniqueTest.objects.all().delete()
-        # Alter the model to it's non-unique-together companion
+        # Alter the model to its non-unique-together companion
         with connection.schema_editor() as editor:
             editor.alter_unique_together(
                 UniqueTest,
@@ -754,14 +847,15 @@ class SchemaTests(TransactionTestCase):
         except SomeError:
             self.assertFalse(connection.in_atomic_block)
 
+    @unittest.skipUnless(connection.features.supports_foreign_keys, "No FK support")
     def test_foreign_key_index_long_names_regression(self):
         """
-        Regression test for #21497. Only affects databases that supports
-        foreign keys.
+        Regression test for #21497.
+        Only affects databases that supports foreign keys.
         """
         # Create the table
         with connection.schema_editor() as editor:
-            editor.create_model(Author)
+            editor.create_model(AuthorWithEvenLongerName)
             editor.create_model(BookWithLongName)
         # Find the properly shortened column name
         column_name = connection.ops.quote_name("author_foreign_key_with_really_long_field_name_id")
@@ -771,6 +865,25 @@ class SchemaTests(TransactionTestCase):
             column_name,
             self.get_indexes(BookWithLongName._meta.db_table),
         )
+
+    @unittest.skipUnless(connection.features.supports_foreign_keys, "No FK support")
+    def test_add_foreign_key_long_names(self):
+        """
+        Regression test for #23009.
+        Only affects databases that supports foreign keys.
+        """
+        # Create the initial tables
+        with connection.schema_editor() as editor:
+            editor.create_model(AuthorWithEvenLongerName)
+            editor.create_model(BookWithLongName)
+        # Add a second FK, this would fail due to long ref name before the fix
+        new_field = ForeignKey(AuthorWithEvenLongerName, related_name="something")
+        new_field.set_attributes_from_name("author_other_really_long_named_i_mean_so_long_fk")
+        with connection.schema_editor() as editor:
+            editor.add_field(
+                BookWithLongName,
+                new_field,
+            )
 
     def test_creation_deletion_reserved_names(self):
         """

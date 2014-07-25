@@ -14,11 +14,11 @@ two things for you before delegating to ``django-admin.py``:
 * It sets the :envvar:`DJANGO_SETTINGS_MODULE` environment variable so that
   it points to your project's ``settings.py`` file.
 
-* It calls ``django.setup()`` to initialize various internals of Django.
+* It calls :func:`django.setup()` to initialize various internals of Django.
 
 .. versionadded:: 1.7
 
-    ``django.setup()`` didn't exist in previous versions of Django.
+    :func:`django.setup()` didn't exist in previous versions of Django.
 
 The ``django-admin.py`` script should be on your system path if you installed
 Django via its ``setup.py`` utility. If it's not on your path, you can find it
@@ -126,16 +126,26 @@ to perform only security and compatibility checks, you would run::
 
     python manage.py check --tag security --tag compatibility
 
+.. django-admin-option:: --list-tags
+
+List all available tags.
+
 compilemessages
 ---------------
 
 .. django-admin:: compilemessages
 
-Compiles .po files created :djadmin:`makemessages` to .mo files for use with
+Compiles .po files created by :djadmin:`makemessages` to .mo files for use with
 the builtin gettext support. See :doc:`/topics/i18n/index`.
 
 Use the :djadminopt:`--locale` option (or its shorter version ``-l``) to
 specify the locale(s) to process. If not provided, all locales are processed.
+
+.. versionadded:: 1.8
+
+Use the :djadminopt:`--exclude` option (or its shorter version ``-x``) to
+specify the locale(s) to exclude from processing. If not provided, no locales
+are excluded.
 
 Example usage::
 
@@ -143,10 +153,10 @@ Example usage::
     django-admin.py compilemessages --locale=pt_BR --locale=fr
     django-admin.py compilemessages -l pt_BR
     django-admin.py compilemessages -l pt_BR -l fr
-
-.. versionchanged:: 1.6
-
-    Added the ability to specify multiple locales.
+    django-admin.py compilemessages --exclude=pt_BR
+    django-admin.py compilemessages --exclude=pt_BR --exclude=fr
+    django-admin.py compilemessages -x pt_BR
+    django-admin.py compilemessages -x pt_BR -x fr
 
 createcachetable
 ----------------
@@ -202,10 +212,6 @@ example, the default settings don't define :setting:`ROOT_URLCONF`, so
 
 The :djadminopt:`--all` option may be provided to display all settings, even
 if they have Django's default value. Such settings are prefixed by ``"###"``.
-
-.. versionadded:: 1.6
-
-    The :djadminopt:`--all` option was added.
 
 dumpdata <app_label app_label app_label.Model ...>
 --------------------------------------------------
@@ -278,14 +284,19 @@ Use :ref:`natural keys <topics-serialization-natural-keys>` to represent
 any foreign key and many-to-many relationship with a model that provides
 a natural key definition.
 
-.. versionadded:: 1.6
-
 .. django-admin-option:: --pks
 
 By default, ``dumpdata`` will output all the records of the model, but
 you can use the ``--pks`` option to specify a comma separated list of
 primary keys on which to filter.  This is only available when dumping
 one model.
+
+.. django-admin-option:: --output
+
+.. versionadded:: 1.8
+
+By default ``dumpdata`` will output all the serialized data to standard output.
+This options allows to specify the file to which the data is to be written.
 
 flush
 -----
@@ -350,23 +361,15 @@ needed.
 ``inspectdb`` works with PostgreSQL, MySQL and SQLite. Foreign-key detection
 only works in PostgreSQL and with certain types of MySQL tables.
 
-If your plan is that your Django application(s) modify data (i.e. edit, remove
-records and create new ones) in the existing database tables corresponding to
-any of the introspected models then one of the manual review and edit steps
-you need to perform on the resulting ``models.py`` file is to change the
-Python declaration of each one of these models to specify it is a
-:attr:`managed <django.db.models.Options.managed>` one.
-
-This serves as an explicit opt-in to give your nascent Django project write
-access to your precious data on a model by model basis.
+By default, ``inspectdb`` creates unmanaged models. That is, ``managed = False``
+in the model's ``Meta`` class tells Django not to manage each table's creation,
+modification, and deletion. If you do want to allow Django to manage the
+table's lifecycle, you'll need to change the
+:attr:`~django.db.models.Options.managed` option to ``True`` (or simply remove
+it because ``True`` is its default value).
 
 The :djadminopt:`--database` option may be used to specify the
 database to introspect.
-
-.. versionchanged:: 1.6
-
-    The behavior by which introspected models are created as unmanaged ones is new
-    in Django 1.6.
 
 loaddata <fixture fixture ...>
 ------------------------------
@@ -380,13 +383,16 @@ onto which the data will be loaded.
 
 .. django-admin-option:: --ignorenonexistent
 
-The :djadminopt:`--ignorenonexistent` option can be used to ignore fields that
-may have been removed from models since the fixture was originally generated.
-
+The :djadminopt:`--ignorenonexistent` option can be used to ignore fields and
+models that may have been removed since the fixture was originally generated.
 
 .. versionchanged:: 1.7
 
     ``--app`` was added.
+
+.. versionchanged:: 1.8
+
+    ``--ignorenonexistent`` also ignores non-existent models.
 
 .. django-admin-option:: --app
 
@@ -558,16 +564,23 @@ Separate multiple extensions with commas or use -e or --extension multiple times
 Use the :djadminopt:`--locale` option (or its shorter version ``-l``) to
 specify the locale(s) to process.
 
+.. versionadded:: 1.8
+
+Use the :djadminopt:`--exclude` option (or its shorter version ``-x``) to
+specify the locale(s) to exclude from processing. If not provided, no locales
+are excluded.
+
 Example usage::
 
     django-admin.py makemessages --locale=pt_BR
     django-admin.py makemessages --locale=pt_BR --locale=fr
     django-admin.py makemessages -l pt_BR
     django-admin.py makemessages -l pt_BR -l fr
+    django-admin.py makemessages --exclude=pt_BR
+    django-admin.py makemessages --exclude=pt_BR --exclude=fr
+    django-admin.py makemessages -x pt_BR
+    django-admin.py makemessages -x pt_BR -x fr
 
-.. versionchanged:: 1.6
-
-    Added the ability to specify multiple locales.
 
 .. versionchanged:: 1.7
 
@@ -620,8 +633,6 @@ for technically skilled translators to understand each message's context.
 
 .. django-admin-option:: --keep-pot
 
-.. versionadded:: 1.6
-
 Use the ``--keep-pot`` option to prevent Django from deleting the temporary
 .pot files it generates before creating the .po file. This is useful for
 debugging errors which may prevent the final language files from being created.
@@ -641,6 +652,8 @@ Providing one or more app names as arguments will limit the migrations created
 to the app(s) specified and any dependencies needed (the table at the other end
 of a ``ForeignKey``, for example).
 
+The :djadminopt:`--noinput` option may be provided to suppress all user prompts.
+
 .. django-admin-option:: --empty
 
 The ``--empty`` option will cause ``makemigrations`` to output an empty
@@ -648,6 +661,17 @@ migration for the specified apps, for manual editing. This option is only
 for advanced users and should not be used unless you are familiar with
 the migration format, migration operations, and the dependencies between
 your migrations.
+
+.. django-admin-option:: --dry-run
+
+The ``--dry-run`` option shows what migrations would be made without
+actually writing any migrations files to disk. Using this option along with
+``--verbosity 3`` will also show the complete migrations files that would be
+written.
+
+.. django-admin-option:: --merge
+
+The ``--merge`` option enables fixing of migration conflicts.
 
 migrate [<app_label> [<migrationname>]]
 ---------------------------------------
@@ -670,7 +694,29 @@ The behavior of this command changes depending on the arguments provided:
 * ``<app_label> <migrationname>``: Brings the database schema to a state where it
   would have just run the given migration, but no further - this may involve
   unapplying migrations if you have previously migrated past the named
-  migration. Use the name `zero` to unapply all migrations for an app.
+  migration. Use the name ``zero`` to unapply all migrations for an app.
+
+.. django-admin-option:: --fake
+
+The ``--fake`` option tells Django to mark the migrations as having been
+applied or unapplied, but without actually running the SQL to change your
+database schema.
+
+This is intended for advanced users to manipulate the
+current migration state directly if they're manually applying changes;
+be warned that using ``--fake`` runs the risk of putting the migration state
+table into a state where manual recovery will be needed to make migrations
+run correctly.
+
+.. django-admin-option:: --list, -l
+
+The ``--list`` option will list all of the apps Django knows about, the
+migrations available for each app and if they are applied or not (marked by
+an ``[X]`` next to the migration name).
+
+Apps without migrations are also included in the list, but will have
+``(no migrations)`` printed under them.
+
 
 runfcgi [options]
 -----------------
@@ -977,10 +1023,6 @@ behavior you can use the ``--no-startup`` option. e.g.::
 
     django-admin.py shell --plain --no-startup
 
-.. versionadded:: 1.6
-
-    The ``--no-startup`` option was added in Django 1.6.
-
 sql <app_label app_label ...>
 -----------------------------
 
@@ -1043,8 +1085,6 @@ sqldropindexes <app_label app_label ...>
 
 .. django-admin:: sqldropindexes
 
-.. versionadded:: 1.6
-
 Prints the DROP INDEX SQL statements for the given app name(s).
 
 The :djadminopt:`--database` option can be used to specify the database for
@@ -1104,6 +1144,25 @@ of sync with its automatically incremented field data.
 
 The :djadminopt:`--database` option can be used to specify the database for
 which to print the SQL.
+
+squashmigrations <app_label> <migration_name>
+---------------------------------------------
+
+.. django-admin:: squashmigrations
+
+Squashes the migrations for ``app_label`` up to and including ``migration_name``
+down into fewer migrations, if possible. The resulting squashed migrations
+can live alongside the unsquashed ones safely. For more information,
+please read :ref:`migration-squashing`.
+
+.. django-admin-option:: --no-optimize
+
+By default, Django will try to optimize the operations in your migrations
+to reduce the size of the resulting file. Pass ``--no-optimize`` if this
+process is failing for you or creating incorrect migrations, though please
+also file a Django bug report about the behavior, as optimization is meant
+to be safe.
+
 
 startapp <app_label> [destination]
 ----------------------------------
@@ -1275,6 +1334,17 @@ The ``--liveserver`` option can be used to override the default address where
 the live server (used with :class:`~django.test.LiveServerTestCase`) is
 expected to run from. The default value is ``localhost:8081``.
 
+.. django-admin-option:: --keepdb
+
+.. versionadded:: 1.8
+
+The ``--keepdb`` option can be used to preserve the test database between test
+runs. This has the advantage of skipping both the create and destroy actions
+which greatly decreases the time to run tests, especially those in a large
+test suite. If the test database does not exist, it will be created on the first
+run and then preserved for each subsequent run. Any unapplied migrations will also
+be applied to the test database before running the test suite.
+
 testserver <fixture fixture ...>
 --------------------------------
 
@@ -1389,9 +1459,8 @@ This command is only available if Django's :doc:`authentication system
 </topics/auth/index>` (``django.contrib.auth``) is installed.
 
 Creates a superuser account (a user who has all permissions). This is
-useful if you need to create an initial superuser account but did not
-do so during the first :djadmin:`migrate`, or if you need to programmatically
-generate superuser accounts for your site(s).
+useful if you need to create an initial superuser account or if you need to
+programmatically generate superuser accounts for your site(s).
 
 When run interactively, this command will prompt for a password for
 the new superuser account. When run non-interactively, no password
@@ -1408,6 +1477,16 @@ it when running interactively.
 
 Use the ``--database`` option to specify the database into which the superuser
 object will be saved.
+
+.. versionadded:: 1.8
+
+You can subclass the management command and override ``get_input_data()`` if you
+want to customize data input and validation. Consult the source code for
+details on the existing implementation and the method's parameters. For example,
+it could be useful if you have a ``ForeignKey`` in
+:attr:`~django.contrib.auth.models.CustomUser.REQUIRED_FIELDS` and want to
+allow creating an instance instead of entering the primary key of an existing
+instance.
 
 ``django.contrib.gis``
 ----------------------
@@ -1483,7 +1562,7 @@ variable.
 Note that this option is unnecessary in ``manage.py``, because it takes care of
 setting the Python path for you.
 
-.. _import search path: http://diveintopython.net/getting_to_know_python/everything_is_an_object.html
+.. _import search path: http://www.diveintopython.net/getting_to_know_python/everything_is_an_object.html
 
 .. django-admin-option:: --settings
 
@@ -1509,11 +1588,6 @@ By default, ``django-admin.py`` will show a simple error message whenever an
 :class:`~django.core.management.CommandError` occurs, but a full stack trace
 for any other exception. If you specify ``--traceback``, ``django-admin.py``
 will also output a full stack trace when a ``CommandError`` is raised.
-
-.. versionchanged:: 1.6
-
-    Previously, Django didn't show a full stack trace by default for exceptions
-    other than ``CommandError``.
 
 .. django-admin-option:: --verbosity
 

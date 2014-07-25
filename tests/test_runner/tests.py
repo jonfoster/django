@@ -3,8 +3,6 @@ Tests for django test runner
 """
 from __future__ import unicode_literals
 
-from optparse import make_option
-import types
 import unittest
 
 from django.core.exceptions import ImproperlyConfigured
@@ -12,7 +10,7 @@ from django.core.management import call_command
 from django import db
 from django.test import runner, TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.test.testcases import connections_support_transactions
-from django.test.utils import IgnoreAllDeprecationWarningsMixin, override_system_checks
+from django.test.utils import override_system_checks
 from django.utils import six
 
 from admin_scripts.tests import AdminScriptTestCase
@@ -153,11 +151,6 @@ class ManageCommandTests(unittest.TestCase):
 
 
 class CustomOptionsTestRunner(runner.DiscoverRunner):
-    option_list = (
-        make_option('--option_a', '-a', action='store', dest='option_a', default='1'),
-        make_option('--option_b', '-b', action='store', dest='option_b', default='2'),
-        make_option('--option_c', '-c', action='store', dest='option_c', default='3'),
-    )
 
     def __init__(self, verbosity=1, interactive=True, failfast=True, option_a=None, option_b=None, option_c=None, **kwargs):
         super(CustomOptionsTestRunner, self).__init__(verbosity=verbosity, interactive=interactive,
@@ -165,6 +158,12 @@ class CustomOptionsTestRunner(runner.DiscoverRunner):
         self.option_a = option_a
         self.option_b = option_b
         self.option_c = option_c
+
+    @classmethod
+    def add_arguments(cls, parser):
+        parser.add_argument('--option_a', '-a', action='store', dest='option_a', default='1'),
+        parser.add_argument('--option_b', '-b', action='store', dest='option_b', default='2'),
+        parser.add_argument('--option_c', '-c', action='store', dest='option_c', default='3'),
 
     def run_tests(self, test_labels, extra_tests=None, **kwargs):
         print("%s:%s:%s" % (self.option_a, self.option_b, self.option_c))
@@ -219,27 +218,6 @@ class Ticket17477RegressionTests(AdminScriptTestCase):
         args = ['help', 'test']
         out, err = self.run_manage(args)
         self.assertNoOutput(err)
-
-
-class ModulesTestsPackages(IgnoreAllDeprecationWarningsMixin, unittest.TestCase):
-
-    def test_get_tests(self):
-        "Check that the get_tests helper function can find tests in a directory"
-        from django.apps import AppConfig
-        from django.test.simple import get_tests
-        app_config = AppConfig.create('test_runner.valid_app')
-        app_config.import_models({})
-        tests = get_tests(app_config)
-        self.assertIsInstance(tests, types.ModuleType)
-
-    def test_import_error(self):
-        "Test for #12658 - Tests with ImportError's shouldn't fail silently"
-        from django.apps import AppConfig
-        from django.test.simple import get_tests
-        app_config = AppConfig.create('test_runner_invalid_app')
-        app_config.import_models({})
-        with self.assertRaises(ImportError):
-            get_tests(app_config)
 
 
 class Sqlite3InMemoryTestDbs(TestCase):
@@ -331,8 +309,8 @@ class AliasedDatabaseTeardownTest(unittest.TestCase):
         old_create_test_db = DatabaseCreation.create_test_db
         try:
             destroyed_names = []
-            DatabaseCreation.destroy_test_db = lambda self, old_database_name, verbosity=1: destroyed_names.append(old_database_name)
-            DatabaseCreation.create_test_db = lambda self, verbosity=1, autoclobber=False: self._get_test_db_name()
+            DatabaseCreation.destroy_test_db = lambda self, old_database_name, verbosity=1, keepdb=False, serialize=True: destroyed_names.append(old_database_name)
+            DatabaseCreation.create_test_db = lambda self, verbosity=1, autoclobber=False, keepdb=False, serialize=True: self._get_test_db_name()
 
             db.connections = db.ConnectionHandler({
                 'default': {

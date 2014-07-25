@@ -13,6 +13,7 @@ from django.utils.module_loading import import_string
 from django.utils.six.moves.urllib.parse import urljoin
 from django.utils.text import get_valid_filename
 from django.utils._os import safe_join, abspathu
+from django.utils.deconstruct import deconstructible
 
 
 __all__ = ('Storage', 'FileSystemStorage', 'DefaultStorage', 'default_storage')
@@ -100,7 +101,7 @@ class Storage(object):
         Returns True if a file referenced by the given name already exists in the
         storage system, or False if the name is available for a new file.
         """
-        raise NotImplementedError('subclasses of Storage must provide a exists() method')
+        raise NotImplementedError('subclasses of Storage must provide an exists() method')
 
     def listdir(self, path):
         """
@@ -144,6 +145,7 @@ class Storage(object):
         raise NotImplementedError('subclasses of Storage must provide a modified_time() method')
 
 
+@deconstructible
 class FileSystemStorage(Storage):
     """
     Standard filesystem storage
@@ -157,6 +159,8 @@ class FileSystemStorage(Storage):
         self.location = abspathu(self.base_location)
         if base_url is None:
             base_url = settings.MEDIA_URL
+        elif not base_url.endswith('/'):
+            base_url += '/'
         self.base_url = base_url
         self.file_permissions_mode = (
             file_permissions_mode if file_permissions_mode is not None
@@ -207,7 +211,6 @@ class FileSystemStorage(Storage):
                 # This file has a file path that we can move.
                 if hasattr(content, 'temporary_file_path'):
                     file_move_safe(content.temporary_file_path(), full_path)
-                    content.close()
 
                 # This is a normal uploadedfile that we can stream.
                 else:
@@ -226,7 +229,6 @@ class FileSystemStorage(Storage):
                                 _file = os.fdopen(fd, mode)
                             _file.write(chunk)
                     finally:
-                        content.close()
                         locks.unlock(fd)
                         if _file is not None:
                             _file.close()

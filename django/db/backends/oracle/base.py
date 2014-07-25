@@ -106,20 +106,34 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     has_zoneinfo_database = pytz is not None
     supports_bitwise_or = False
     can_defer_constraint_checks = True
-    ignores_nulls_in_unique_constraints = False
+    supports_partially_nullable_unique_constraints = False
+    truncates_names = True
     has_bulk_insert = True
     supports_tablespaces = True
     supports_sequence_reset = False
+    can_introspect_max_length = False
+    can_introspect_time_field = False
     atomic_transactions = False
     supports_combined_alters = False
     nulls_order_largest = True
     requires_literal_defaults = True
     connection_persists_old_columns = True
     closed_cursor_error_class = InterfaceError
+    bare_select_suffix = " FROM DUAL"
+    uppercases_column_names = True
 
 
 class DatabaseOperations(BaseDatabaseOperations):
     compiler_module = "django.db.backends.oracle.compiler"
+
+    # Oracle uses NUMBER(11) and NUMBER(19) for integer fields.
+    integer_field_ranges = {
+        'SmallIntegerField': (-99999999999, 99999999999),
+        'IntegerField': (-99999999999, 99999999999),
+        'BigIntegerField': (-9999999999999999999, 9999999999999999999),
+        'PositiveSmallIntegerField': (0, 99999999999),
+        'PositiveIntegerField': (0, 99999999999),
+    }
 
     def autoinc_sql(self, table, column):
         # To simulate auto-incrementing primary keys in Oracle, we have to
@@ -245,7 +259,10 @@ WHEN (new.%(col_name)s IS NULL)
         # string instead of null, but only if the field accepts the
         # empty string.
         if value is None and field and field.empty_strings_allowed:
-            value = ''
+            if field.get_internal_type() == 'BinaryField':
+                value = b''
+            else:
+                value = ''
         # Convert 1 or 0 to True or False
         elif value in (1, 0) and field and field.get_internal_type() in ('BooleanField', 'NullBooleanField'):
             value = bool(value)
@@ -673,12 +690,18 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         "Returns a new instance of this backend's SchemaEditor"
         return DatabaseSchemaEditor(self, *args, **kwargs)
 
-    # Oracle doesn't support savepoint commits.  Ignore them.
+    # Oracle doesn't support releasing savepoints. But we fake them when query
+    # logging is enabled to keep query counts consistent with other backends.
     def _savepoint_commit(self, sid):
-        pass
+        if self.queries_logged:
+            self.queries_log.append({
+                'sql': '-- RELEASE SAVEPOINT %s (faked)' % self.ops.quote_name(sid),
+                'time': '0.000',
+            })
 
     def _set_autocommit(self, autocommit):
-        self.connection.autocommit = autocommit
+        with self.wrap_database_errors:
+            self.connection.autocommit = autocommit
 
     def check_constraints(self, table_names=None):
         """
@@ -695,7 +718,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             else:
                 # Use a cx_Oracle cursor directly, bypassing Django's utilities.
                 self.connection.cursor().execute("SELECT 1 FROM DUAL")
-        except DatabaseError:
+        except Database.Error:
             return False
         else:
             return True
@@ -733,6 +756,7 @@ class OracleParam(object):
                 param = timezone.make_aware(param, default_timezone)
             param = Oracle_datetime.from_datetime(param.astimezone(timezone.utc))
 
+        string_size = 0
         # Oracle doesn't recognize True and False correctly in Python 3.
         # The conversion done below works both in 2 and 3.
         if param is True:
@@ -741,15 +765,20 @@ class OracleParam(object):
             param = "0"
         if hasattr(param, 'bind_parameter'):
             self.force_bytes = param.bind_parameter(cursor)
-        elif isinstance(param, six.memoryview):
+        elif isinstance(param, Database.Binary):
             self.force_bytes = param
         else:
+            # To transmit to the database, we need Unicode if supported
+            # To get size right, we must consider bytes.
             self.force_bytes = convert_unicode(param, cursor.charset,
                                              strings_only)
+            if isinstance(self.force_bytes, six.string_types):
+                # We could optimize by only converting up to 4000 bytes here
+                string_size = len(force_bytes(param, cursor.charset, strings_only))
         if hasattr(param, 'input_size'):
             # If parameter has `input_size` attribute, use that.
             self.input_size = param.input_size
-        elif isinstance(param, six.string_types) and len(param) > 4000:
+        elif string_size > 4000:
             # Mark any string param greater than 4000 characters as a CLOB.
             self.input_size = Database.CLOB
         else:
@@ -906,6 +935,13 @@ class FormatStylePlaceholderCursor(object):
 
     def fetchall(self):
         return tuple(_rowfactory(r, self.cursor) for r in self.cursor.fetchall())
+
+    def close(self):
+        try:
+            self.cursor.close()
+        except Database.InterfaceError:
+            # already closed
+            pass
 
     def var(self, *args):
         return VariableWrapper(self.cursor.var(*args))

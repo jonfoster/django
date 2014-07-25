@@ -7,6 +7,7 @@ import warnings
 
 from django import test
 from django import forms
+from django.core import validators
 from django.core.exceptions import ValidationError
 from django.db import connection, transaction, models, IntegrityError
 from django.db.models.fields import (
@@ -21,9 +22,10 @@ from django.utils import six
 from django.utils.functional import lazy
 
 from .models import (
-    Foo, Bar, Whiz, BigD, BigS, BigInt, Post, NullBooleanModel,
+    Foo, Bar, Whiz, BigD, BigS, BigIntegerModel, Post, NullBooleanModel,
     BooleanModel, PrimaryKeyCharModel, DataModel, Document, RenamedField,
-    DateTimeModel, VerboseNameField, FksToBooleans, FkToChar, FloatModel)
+    DateTimeModel, VerboseNameField, FksToBooleans, FkToChar, FloatModel,
+    SmallIntegerModel, IntegerModel, PositiveSmallIntegerModel, PositiveIntegerModel)
 
 
 class BasicFieldTests(test.TestCase):
@@ -131,7 +133,6 @@ class DecimalFieldTests(test.TestCase):
         self.assertEqual(f._format(None), None)
 
     def test_get_db_prep_lookup(self):
-        from django.db import connection
         f = models.DecimalField(max_digits=5, decimal_places=1)
         self.assertEqual(f.get_db_prep_lookup('exact', None, connection=connection), [None])
 
@@ -212,7 +213,6 @@ class DateTimeFieldTests(unittest.TestCase):
 
 class BooleanFieldTests(unittest.TestCase):
     def _test_get_db_prep_lookup(self, f):
-        from django.db import connection
         self.assertEqual(f.get_db_prep_lookup('exact', True, connection=connection), [True])
         self.assertEqual(f.get_db_prep_lookup('exact', '1', connection=connection), [True])
         self.assertEqual(f.get_db_prep_lookup('exact', 1, connection=connection), [True])
@@ -298,7 +298,7 @@ class BooleanFieldTests(unittest.TestCase):
         # conversions are applied with an offset
         b5 = BooleanModel.objects.all().extra(
             select={'string_col': 'string'})[0]
-        self.assertFalse(isinstance(b5.pk, bool))
+        self.assertNotIsInstance(b5.pk, bool)
 
     def test_select_related(self):
         """
@@ -451,33 +451,92 @@ class ValidationTest(test.TestCase):
         self.assertRaises(ValidationError, f.clean, None, None)
 
 
-class BigIntegerFieldTests(test.TestCase):
-    def test_limits(self):
-        # Ensure that values that are right at the limits can be saved
-        # and then retrieved without corruption.
-        maxval = 9223372036854775807
-        minval = -maxval - 1
-        BigInt.objects.create(value=maxval)
-        qs = BigInt.objects.filter(value__gte=maxval)
+class IntegerFieldTests(test.TestCase):
+    model = IntegerModel
+    documented_range = (-2147483648, 2147483647)
+
+    def test_documented_range(self):
+        """
+        Ensure that values within the documented safe range pass validation,
+        can be saved and retrieved without corruption.
+        """
+        min_value, max_value = self.documented_range
+
+        instance = self.model(value=min_value)
+        instance.full_clean()
+        instance.save()
+        qs = self.model.objects.filter(value__lte=min_value)
         self.assertEqual(qs.count(), 1)
-        self.assertEqual(qs[0].value, maxval)
-        BigInt.objects.create(value=minval)
-        qs = BigInt.objects.filter(value__lte=minval)
+        self.assertEqual(qs[0].value, min_value)
+
+        instance = self.model(value=max_value)
+        instance.full_clean()
+        instance.save()
+        qs = self.model.objects.filter(value__gte=max_value)
         self.assertEqual(qs.count(), 1)
-        self.assertEqual(qs[0].value, minval)
+        self.assertEqual(qs[0].value, max_value)
+
+    def test_backend_range_validation(self):
+        """
+        Ensure that backend specific range are enforced at the model
+        validation level. ref #12030.
+        """
+        field = self.model._meta.get_field('value')
+        internal_type = field.get_internal_type()
+        min_value, max_value = connection.ops.integer_field_range(internal_type)
+
+        if min_value is not None:
+            instance = self.model(value=min_value - 1)
+            expected_message = validators.MinValueValidator.message % {
+                'limit_value': min_value
+            }
+            with self.assertRaisesMessage(ValidationError, expected_message):
+                instance.full_clean()
+            instance.value = min_value
+            instance.full_clean()
+
+        if max_value is not None:
+            instance = self.model(value=max_value + 1)
+            expected_message = validators.MaxValueValidator.message % {
+                'limit_value': max_value
+            }
+            with self.assertRaisesMessage(ValidationError, expected_message):
+                instance.full_clean()
+            instance.value = max_value
+            instance.full_clean()
 
     def test_types(self):
-        b = BigInt(value=0)
-        self.assertIsInstance(b.value, six.integer_types)
-        b.save()
-        self.assertIsInstance(b.value, six.integer_types)
-        b = BigInt.objects.all()[0]
-        self.assertIsInstance(b.value, six.integer_types)
+        instance = self.model(value=0)
+        self.assertIsInstance(instance.value, six.integer_types)
+        instance.save()
+        self.assertIsInstance(instance.value, six.integer_types)
+        instance = self.model.objects.get()
+        self.assertIsInstance(instance.value, six.integer_types)
 
     def test_coercing(self):
-        BigInt.objects.create(value='10')
-        b = BigInt.objects.get(value='10')
-        self.assertEqual(b.value, 10)
+        self.model.objects.create(value='10')
+        instance = self.model.objects.get(value='10')
+        self.assertEqual(instance.value, 10)
+
+
+class SmallIntegerFieldTests(IntegerFieldTests):
+    model = SmallIntegerModel
+    documented_range = (-32768, 32767)
+
+
+class BigIntegerFieldTests(IntegerFieldTests):
+    model = BigIntegerModel
+    documented_range = (-9223372036854775808, 9223372036854775807)
+
+
+class PositiveSmallIntegerFieldTests(IntegerFieldTests):
+    model = PositiveSmallIntegerModel
+    documented_range = (0, 32767)
+
+
+class PositiveIntegerFieldTests(IntegerFieldTests):
+    model = PositiveIntegerModel
+    documented_range = (0, 2147483647)
 
 
 class TypeCoercionTests(test.TestCase):
@@ -546,6 +605,7 @@ class FileFieldTests(unittest.TestCase):
 class BinaryFieldTests(test.TestCase):
     binary_data = b'\x00\x46\xFE'
 
+    @test.skipUnlessDBFeature('supports_binary_field')
     def test_set_and_retrieve(self):
         data_set = (self.binary_data, six.memoryview(self.binary_data))
         for bdata in data_set:
@@ -559,10 +619,6 @@ class BinaryFieldTests(test.TestCase):
             self.assertEqual(bytes(dm.data), bytes(bdata))
             # Test default value
             self.assertEqual(bytes(dm.short_data), b'\x08')
-
-    if connection.vendor == 'mysql' and six.PY3:
-        # Existing MySQL DB-API drivers fail on binary data.
-        test_set_and_retrieve = unittest.expectedFailure(test_set_and_retrieve)
 
     def test_max_length(self):
         dm = DataModel(short_data=self.binary_data * 4)
@@ -614,9 +670,17 @@ class PromiseTest(test.TestCase):
         self.assertIsInstance(
             CharField().get_prep_value(lazy_func()),
             six.text_type)
+        lazy_func = lazy(lambda: 0, int)
+        self.assertIsInstance(
+            CharField().get_prep_value(lazy_func()),
+            six.text_type)
 
     def test_CommaSeparatedIntegerField(self):
         lazy_func = lazy(lambda: '1,2', six.text_type)
+        self.assertIsInstance(
+            CommaSeparatedIntegerField().get_prep_value(lazy_func()),
+            six.text_type)
+        lazy_func = lazy(lambda: 0, int)
         self.assertIsInstance(
             CommaSeparatedIntegerField().get_prep_value(lazy_func()),
             six.text_type)
@@ -650,9 +714,17 @@ class PromiseTest(test.TestCase):
         self.assertIsInstance(
             FileField().get_prep_value(lazy_func()),
             six.text_type)
+        lazy_func = lazy(lambda: 0, int)
+        self.assertIsInstance(
+            FileField().get_prep_value(lazy_func()),
+            six.text_type)
 
     def test_FilePathField(self):
         lazy_func = lazy(lambda: 'tests.py', six.text_type)
+        self.assertIsInstance(
+            FilePathField().get_prep_value(lazy_func()),
+            six.text_type)
+        lazy_func = lazy(lambda: 0, int)
         self.assertIsInstance(
             FilePathField().get_prep_value(lazy_func()),
             six.text_type)
@@ -676,15 +748,23 @@ class PromiseTest(test.TestCase):
             int)
 
     def test_IPAddressField(self):
-        lazy_func = lazy(lambda: '127.0.0.1', six.text_type)
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
+            lazy_func = lazy(lambda: '127.0.0.1', six.text_type)
+            self.assertIsInstance(
+                IPAddressField().get_prep_value(lazy_func()),
+                six.text_type)
+            lazy_func = lazy(lambda: 0, int)
             self.assertIsInstance(
                 IPAddressField().get_prep_value(lazy_func()),
                 six.text_type)
 
     def test_GenericIPAddressField(self):
         lazy_func = lazy(lambda: '127.0.0.1', six.text_type)
+        self.assertIsInstance(
+            GenericIPAddressField().get_prep_value(lazy_func()),
+            six.text_type)
+        lazy_func = lazy(lambda: 0, int)
         self.assertIsInstance(
             GenericIPAddressField().get_prep_value(lazy_func()),
             six.text_type)
@@ -712,6 +792,10 @@ class PromiseTest(test.TestCase):
         self.assertIsInstance(
             SlugField().get_prep_value(lazy_func()),
             six.text_type)
+        lazy_func = lazy(lambda: 0, int)
+        self.assertIsInstance(
+            SlugField().get_prep_value(lazy_func()),
+            six.text_type)
 
     def test_SmallIntegerField(self):
         lazy_func = lazy(lambda: 1, int)
@@ -721,6 +805,10 @@ class PromiseTest(test.TestCase):
 
     def test_TextField(self):
         lazy_func = lazy(lambda: 'Abc', six.text_type)
+        self.assertIsInstance(
+            TextField().get_prep_value(lazy_func()),
+            six.text_type)
+        lazy_func = lazy(lambda: 0, int)
         self.assertIsInstance(
             TextField().get_prep_value(lazy_func()),
             six.text_type)

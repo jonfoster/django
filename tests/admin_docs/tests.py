@@ -11,8 +11,15 @@ from django.test import TestCase, modify_settings, override_settings
 from .models import Person, Company
 
 
-class MiscTests(TestCase):
-    urls = 'admin_docs.urls'
+@override_settings(
+    PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
+    ROOT_URLCONF='admin_docs.urls')
+@modify_settings(INSTALLED_APPS={'append': 'django.contrib.admindocs'})
+class AdminDocsTestCase(TestCase):
+    pass
+
+
+class MiscTests(AdminDocsTestCase):
 
     def setUp(self):
         User.objects.create_superuser('super', None, 'secret')
@@ -30,11 +37,9 @@ class MiscTests(TestCase):
         self.client.get('/admindocs/views/')  # should not raise
 
 
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
 @unittest.skipUnless(utils.docutils_is_available, "no docutils installed.")
-class AdminDocViewTests(TestCase):
+class AdminDocViewTests(AdminDocsTestCase):
     fixtures = ['data.xml']
-    urls = 'admin_docs.urls'
 
     def setUp(self):
         self.client.login(username='super', password='secret')
@@ -81,7 +86,11 @@ class AdminDocViewTests(TestCase):
 
     def test_model_index(self):
         response = self.client.get(reverse('django-admindocs-models-index'))
-        self.assertContains(response, '<h2 id="app-auth">Auth</h2>', html=True)
+        self.assertContains(
+            response,
+            '<h2 id="app-auth">Authentication and Authorization (django.contrib.auth)</h2>',
+            html=True
+        )
 
     def test_template_detail(self):
         response = self.client.get(reverse('django-admindocs-templates',
@@ -104,10 +113,8 @@ class AdminDocViewTests(TestCase):
             utils.docutils_is_available = True
 
 
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
-class XViewMiddlewareTest(TestCase):
+class XViewMiddlewareTest(AdminDocsTestCase):
     fixtures = ['data.xml']
-    urls = 'admin_docs.urls'
 
     def test_xview_func(self):
         user = User.objects.get(username='super')
@@ -147,8 +154,7 @@ class XViewMiddlewareTest(TestCase):
 
 
 @unittest.skipUnless(utils.docutils_is_available, "no docutils installed.")
-class DefaultRoleTest(TestCase):
-    urls = 'admin_docs.urls'
+class DefaultRoleTest(AdminDocsTestCase):
 
     def test_parse_rst(self):
         """
@@ -183,15 +189,13 @@ class DefaultRoleTest(TestCase):
         self.assertEqual(parts['fragment'], markup)
 
 
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
 @unittest.skipUnless(utils.docutils_is_available, "no docutils installed.")
-class TestModelDetailView(TestCase):
+class TestModelDetailView(AdminDocsTestCase):
     """
     Tests that various details render correctly
     """
 
     fixtures = ['data.xml']
-    urls = 'admin_docs.urls'
 
     def setUp(self):
         self.client.login(username='super', password='secret')

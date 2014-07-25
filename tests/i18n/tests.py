@@ -4,10 +4,12 @@ from __future__ import unicode_literals
 from contextlib import contextmanager
 import datetime
 import decimal
+import gettext as gettext_module
 from importlib import import_module
 import os
 import pickle
 from threading import local
+from unittest import skipUnless
 
 from django.conf import settings
 from django.template import Template, Context
@@ -29,7 +31,7 @@ from django.utils.translation import (activate, deactivate,
     ugettext, ugettext_lazy,
     ngettext_lazy,
     ungettext_lazy,
-    pgettext,
+    pgettext, pgettext_lazy,
     npgettext, npgettext_lazy,
     check_for_language,
     string_concat, LANGUAGE_SESSION_KEY)
@@ -93,9 +95,20 @@ class TranslationTests(TestCase):
         s4 = ugettext_lazy('Some other string')
         self.assertEqual(False, s == s4)
 
-        if six.PY2:
-            # On Python 2, gettext_lazy should not transform a bytestring to unicode
-            self.assertEqual(gettext_lazy(b"test").upper(), b"TEST")
+    @skipUnless(six.PY2, "No more bytestring translations on PY3")
+    def test_lazy_and_bytestrings(self):
+        # On Python 2, (n)gettext_lazy should not transform a bytestring to unicode
+        self.assertEqual(gettext_lazy(b"test").upper(), b"TEST")
+        self.assertEqual((ngettext_lazy(b"%d test", b"%d tests") % 1).upper(), b"1 TEST")
+
+        # Other versions of lazy functions always return unicode
+        self.assertEqual(ugettext_lazy(b"test").upper(), "TEST")
+        self.assertEqual((ungettext_lazy(b"%d test", b"%d tests") % 1).upper(), "1 TEST")
+        self.assertEqual(pgettext_lazy(b"context", b"test").upper(), "TEST")
+        self.assertEqual(
+            (npgettext_lazy(b"context", b"%d test", b"%d tests") % 1).upper(),
+            "1 TEST"
+        )
 
     def test_lazy_pickle(self):
         s1 = ugettext_lazy("test")
@@ -725,11 +738,27 @@ class FormattingTests(TestCase):
         """
         Tests the iter_format_modules function.
         """
+        # Importing some format modules so that we can compare the returned
+        # modules with these expected modules
+        default_mod = import_module('django.conf.locale.de.formats')
+        test_mod = import_module('i18n.other.locale.de.formats')
+        test_mod2 = import_module('i18n.other2.locale.de.formats')
+
         with translation.override('de-at', deactivate=True):
-            de_format_mod = import_module('django.conf.locale.de.formats')
-            self.assertEqual(list(iter_format_modules('de')), [de_format_mod])
-            test_de_format_mod = import_module('i18n.other.locale.de.formats')
-            self.assertEqual(list(iter_format_modules('de', 'i18n.other.locale')), [test_de_format_mod, de_format_mod])
+            # Should return the correct default module when no setting is set
+            self.assertEqual(list(iter_format_modules('de')), [default_mod])
+
+            # When the setting is a string, should return the given module and
+            # the default module
+            self.assertEqual(
+                list(iter_format_modules('de', 'i18n.other.locale')),
+                [test_mod, default_mod])
+
+            # When setting is a list of strings, should return the given
+            # modules and the default module
+            self.assertEqual(
+                list(iter_format_modules('de', ['i18n.other.locale', 'i18n.other2.locale'])),
+                [test_mod, test_mod2, default_mod])
 
     def test_iter_format_modules_stability(self):
         """
@@ -954,6 +983,16 @@ class MiscTests(TestCase):
         r.META = {'HTTP_ACCEPT_LANGUAGE': 'zh-tw,en'}
         self.assertEqual(g(r), 'zh-tw')
 
+    def test_special_fallback_language(self):
+        """
+        Some languages may have special fallbacks that don't follow the simple
+        'fr-ca' -> 'fr' logic (notably Chinese codes).
+        """
+        r = self.rf.get('/')
+        r.COOKIES = {}
+        r.META = {'HTTP_ACCEPT_LANGUAGE': 'zh-my,en'}
+        self.assertEqual(get_language_from_request(r), 'zh-hans')
+
     def test_parse_language_cookie(self):
         """
         Now test that we parse language preferences stored in a cookie correctly.
@@ -1127,6 +1166,16 @@ class TestLanguageInfo(TestCase):
     def test_unknown_language_code_and_country_code(self):
         six.assertRaisesRegex(self, KeyError, r"Unknown language code xx-xx and xx\.", get_language_info, 'xx-xx')
 
+    def test_fallback_language_code(self):
+        """
+        get_language_info return the first fallback language info if the lang_info
+        struct does not contain the 'name' key.
+        """
+        li = get_language_info('zh-my')
+        self.assertEqual(li['code'], 'zh-hans')
+        li = get_language_info('zh-cn')
+        self.assertEqual(li['code'], 'zh-cn')
+
 
 class MultipleLocaleActivationTests(TestCase):
     """
@@ -1261,10 +1310,9 @@ class MultipleLocaleActivationTests(TestCase):
         'django.middleware.locale.LocaleMiddleware',
         'django.middleware.common.CommonMiddleware',
     ),
+    ROOT_URLCONF='i18n.urls',
 )
 class LocaleMiddlewareTests(TestCase):
-
-    urls = 'i18n.urls'
 
     def test_streaming_response(self):
         # Regression test for #5241
@@ -1299,10 +1347,9 @@ class LocaleMiddlewareTests(TestCase):
         'django.middleware.locale.LocaleMiddleware',
         'django.middleware.common.CommonMiddleware',
     ),
+    ROOT_URLCONF='i18n.urls'
 )
 class CountrySpecificLanguageTests(TestCase):
-
-    urls = 'i18n.urls'
 
     def setUp(self):
         super(CountrySpecificLanguageTests, self).setUp()
@@ -1340,3 +1387,26 @@ class CountrySpecificLanguageTests(TestCase):
         r.META = {'HTTP_ACCEPT_LANGUAGE': 'pt-pt,en-US;q=0.8,en;q=0.6,ru;q=0.4'}
         lang = get_language_from_request(r)
         self.assertEqual('pt-br', lang)
+
+
+class TranslationFilesMissing(TestCase):
+
+    def setUp(self):
+        super(TranslationFilesMissing, self).setUp()
+        self.gettext_find_builtin = gettext_module.find
+
+    def tearDown(self):
+        gettext_module.find = self.gettext_find_builtin
+        super(TranslationFilesMissing, self).tearDown()
+
+    def patchGettextFind(self):
+        gettext_module.find = lambda *args, **kw: None
+
+    def test_failure_finding_default_mo_files(self):
+        '''
+        Ensure IOError is raised if the default language is unparseable.
+        Refs: #18192
+        '''
+        self.patchGettextFind()
+        trans_real._translations = {}
+        self.assertRaises(IOError, activate, 'en')

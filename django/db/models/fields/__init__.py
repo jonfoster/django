@@ -20,7 +20,7 @@ from django.core import exceptions, validators, checks
 from django.utils.datastructures import DictWrapper
 from django.utils.dateparse import parse_date, parse_datetime, parse_time
 from django.utils.deprecation import RemovedInDjango19Warning
-from django.utils.functional import curry, total_ordering, Promise
+from django.utils.functional import cached_property, curry, total_ordering, Promise
 from django.utils.text import capfirst
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
@@ -157,7 +157,6 @@ class Field(RegisterLookupMixin):
             Field.creation_counter += 1
 
         self._validators = validators  # Store for deconstruction later
-        self.validators = self.default_validators + validators
 
         messages = {}
         for c in reversed(self.__class__.__mro__):
@@ -371,7 +370,7 @@ class Field(RegisterLookupMixin):
             path = path.replace("django.db.models.fields", "django.db.models")
         # Return basic info - other fields should override this.
         return (
-            self.name,
+            force_text(self.name, strings_only=True),
             path,
             [],
             keywords,
@@ -446,6 +445,12 @@ class Field(RegisterLookupMixin):
         Returns the converted value. Subclasses should override this.
         """
         return value
+
+    @cached_property
+    def validators(self):
+        # Some validators can't be created at field initialization time.
+        # This method provides a way to delay their creation until required.
+        return self.default_validators + self._validators
 
     def run_validators(self, value):
         if value in self.empty_values:
@@ -723,7 +728,7 @@ class Field(RegisterLookupMixin):
         """Returns choices with a default blank choices included, for use
         as SelectField choices for this field."""
         blank_defined = False
-        for choice, _ in self.choices:
+        for choice, __ in self.choices:
             if choice in ('', None):
                 blank_defined = True
                 break
@@ -1069,7 +1074,41 @@ class CommaSeparatedIntegerField(CharField):
         return super(CommaSeparatedIntegerField, self).formfield(**defaults)
 
 
-class DateField(Field):
+class DateTimeCheckMixin(object):
+
+    def check(self, **kwargs):
+        errors = super(DateTimeCheckMixin, self).check(**kwargs)
+        errors.extend(self._check_mutually_exclusive_options())
+        errors.extend(self._check_fix_default_value())
+        return errors
+
+    def _check_mutually_exclusive_options(self):
+        # auto_now, auto_now_add, and default are mutually exclusive
+        # options. The use of more than one of these options together
+        # will trigger an Error
+        mutually_exclusive_options = [self.auto_now_add, self.auto_now,
+                                      self.has_default()]
+        enabled_options = [option not in (None, False)
+                          for option in mutually_exclusive_options].count(True)
+        if enabled_options > 1:
+            return [
+                checks.Error(
+                    "The options auto_now, auto_now_add, and default "
+                    "are mutually exclusive. Only one of these options "
+                    "may be present.",
+                    hint=None,
+                    obj=self,
+                    id='fields.E160',
+                )
+            ]
+        else:
+            return []
+
+    def _check_fix_default_value(self):
+        return []
+
+
+class DateField(DateTimeCheckMixin, Field):
     empty_strings_allowed = False
     default_error_messages = {
         'invalid': _("'%(value)s' value has an invalid date format. It must be "
@@ -1086,6 +1125,49 @@ class DateField(Field):
             kwargs['editable'] = False
             kwargs['blank'] = True
         super(DateField, self).__init__(verbose_name, name, **kwargs)
+
+    def _check_fix_default_value(self):
+        """
+        Adds a warning to the checks framework stating, that using an actual
+        date or datetime value is probably wrong; it's only being evaluated on
+        server start-up.
+
+        For details see ticket #21905
+        """
+        if not self.has_default():
+            return []
+
+        now = timezone.now()
+        if not timezone.is_naive(now):
+            now = timezone.make_naive(now, timezone.utc)
+        value = self.default
+        if isinstance(value, datetime.datetime):
+            if not timezone.is_naive(value):
+                value = timezone.make_naive(value, timezone.utc)
+            value = value.date()
+        elif isinstance(value, datetime.date):
+            # Nothing to do, as dates don't have tz information
+            pass
+        else:
+            # No explicit date / datetime value -- no checks necessary
+            return []
+        offset = datetime.timedelta(days=1)
+        lower = (now - offset).date()
+        upper = (now + offset).date()
+        if lower <= value <= upper:
+            return [
+                checks.Warning(
+                    'Fixed default value provided.',
+                    hint='It seems you set a fixed date / time / datetime '
+                         'value as default for this field. This may not be '
+                         'what you want. If you want to have the current date '
+                         'as default, use `django.utils.timezone.now`',
+                    obj=self,
+                    id='fields.W161',
+                )
+            ]
+
+        return []
 
     def deconstruct(self):
         name, path, args, kwargs = super(DateField, self).deconstruct()
@@ -1190,6 +1272,52 @@ class DateTimeField(DateField):
     description = _("Date (with time)")
 
     # __init__ is inherited from DateField
+
+    def _check_fix_default_value(self):
+        """
+        Adds a warning to the checks framework stating, that using an actual
+        date or datetime value is probably wrong; it's only being evaluated on
+        server start-up.
+
+        For details see ticket #21905
+        """
+        if not self.has_default():
+            return []
+
+        now = timezone.now()
+        if not timezone.is_naive(now):
+            now = timezone.make_naive(now, timezone.utc)
+        value = self.default
+        if isinstance(value, datetime.datetime):
+            second_offset = datetime.timedelta(seconds=10)
+            lower = now - second_offset
+            upper = now + second_offset
+            if timezone.is_aware(value):
+                value = timezone.make_naive(value, timezone.utc)
+        elif isinstance(value, datetime.date):
+            second_offset = datetime.timedelta(seconds=10)
+            lower = now - second_offset
+            lower = datetime.datetime(lower.year, lower.month, lower.day)
+            upper = now + second_offset
+            upper = datetime.datetime(upper.year, upper.month, upper.day)
+            value = datetime.datetime(value.year, value.month, value.day)
+        else:
+            # No explicit date / datetime value -- no checks necessary
+            return []
+        if lower <= value <= upper:
+            return [
+                checks.Warning(
+                    'Fixed default value provided.',
+                    hint='It seems you set a fixed date / time / datetime '
+                         'value as default for this field. This may not be '
+                         'what you want. If you want to have the current date '
+                         'as default, use `django.utils.timezone.now`',
+                    obj=self,
+                    id='fields.W161',
+                )
+            ]
+
+        return []
 
     def get_internal_type(self):
         return "DateTimeField"
@@ -1439,10 +1567,8 @@ class EmailField(CharField):
     description = _("Email address")
 
     def __init__(self, *args, **kwargs):
-        # max_length should be overridden to 254 characters to be fully
-        # compliant with RFCs 3696 and 5321
-
-        kwargs['max_length'] = kwargs.get('max_length', 75)
+        # max_length=254 to be compliant with RFCs 3696 and 5321
+        kwargs['max_length'] = kwargs.get('max_length', 254)
         super(EmailField, self).__init__(*args, **kwargs)
 
     def deconstruct(self):
@@ -1504,6 +1630,12 @@ class FilePathField(Field):
             del kwargs["max_length"]
         return name, path, args, kwargs
 
+    def get_prep_value(self, value):
+        value = super(FilePathField, self).get_prep_value(value)
+        if value is None:
+            return None
+        return six.text_type(value)
+
     def formfield(self, **kwargs):
         defaults = {
             'path': self.path,
@@ -1560,6 +1692,19 @@ class IntegerField(Field):
         'invalid': _("'%(value)s' value must be an integer."),
     }
     description = _("Integer")
+
+    @cached_property
+    def validators(self):
+        # These validators can't be added at field initialization time since
+        # they're based on values retrieved from `connection`.
+        range_validators = []
+        internal_type = self.get_internal_type()
+        min_value, max_value = connection.ops.integer_field_range(internal_type)
+        if min_value is not None:
+            range_validators.append(validators.MinValueValidator(min_value))
+        if max_value is not None:
+            range_validators.append(validators.MaxValueValidator(max_value))
+        return super(IntegerField, self).validators + range_validators
 
     def get_prep_value(self, value):
         value = super(IntegerField, self).get_prep_value(value)
@@ -1623,6 +1768,12 @@ class IPAddressField(Field):
         name, path, args, kwargs = super(IPAddressField, self).deconstruct()
         del kwargs['max_length']
         return name, path, args, kwargs
+
+    def get_prep_value(self, value):
+        value = super(IPAddressField, self).get_prep_value(value)
+        if value is None:
+            return None
+        return six.text_type(value)
 
     def get_internal_type(self):
         return "IPAddressField"
@@ -1693,12 +1844,14 @@ class GenericIPAddressField(Field):
 
     def get_prep_value(self, value):
         value = super(GenericIPAddressField, self).get_prep_value(value)
+        if value is None:
+            return None
         if value and ':' in value:
             try:
                 return clean_ipv6_address(value, self.unpack_ipv4)
             except exceptions.ValidationError:
                 pass
-        return value
+        return six.text_type(value)
 
     def formfield(self, **kwargs):
         defaults = {
@@ -1855,7 +2008,7 @@ class TextField(Field):
         return super(TextField, self).formfield(**defaults)
 
 
-class TimeField(Field):
+class TimeField(DateTimeCheckMixin, Field):
     empty_strings_allowed = False
     default_error_messages = {
         'invalid': _("'%(value)s' value has an invalid format. It must be in "
@@ -1872,6 +2025,52 @@ class TimeField(Field):
             kwargs['editable'] = False
             kwargs['blank'] = True
         super(TimeField, self).__init__(verbose_name, name, **kwargs)
+
+    def _check_fix_default_value(self):
+        """
+        Adds a warning to the checks framework stating, that using an actual
+        time or datetime value is probably wrong; it's only being evaluated on
+        server start-up.
+
+        For details see ticket #21905
+        """
+        if not self.has_default():
+            return []
+
+        now = timezone.now()
+        if not timezone.is_naive(now):
+            now = timezone.make_naive(now, timezone.utc)
+        value = self.default
+        if isinstance(value, datetime.datetime):
+            second_offset = datetime.timedelta(seconds=10)
+            lower = now - second_offset
+            upper = now + second_offset
+            if timezone.is_aware(value):
+                value = timezone.make_naive(value, timezone.utc)
+        elif isinstance(value, datetime.time):
+            second_offset = datetime.timedelta(seconds=10)
+            lower = now - second_offset
+            upper = now + second_offset
+            value = datetime.datetime.combine(now.date(), value)
+            if timezone.is_aware(value):
+                value = timezone.make_naive(value, timezone.utc).time()
+        else:
+            # No explicit time / datetime value -- no checks necessary
+            return []
+        if lower <= value <= upper:
+            return [
+                checks.Warning(
+                    'Fixed default value provided.',
+                    hint='It seems you set a fixed date / time / datetime '
+                         'value as default for this field. This may not be '
+                         'what you want. If you want to have the current date '
+                         'as default, use `django.utils.timezone.now`',
+                    obj=self,
+                    id='fields.W161',
+                )
+            ]
+
+        return []
 
     def deconstruct(self):
         name, path, args, kwargs = super(TimeField, self).deconstruct()

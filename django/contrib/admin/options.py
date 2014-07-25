@@ -11,7 +11,7 @@ from django.contrib.admin import widgets, helpers
 from django.contrib.admin import validation
 from django.contrib.admin.checks import (BaseModelAdminChecks, ModelAdminChecks,
     InlineModelAdminChecks)
-from django.contrib.admin.utils import (unquote, flatten_fieldsets,
+from django.contrib.admin.utils import (quote, unquote, flatten_fieldsets,
     get_deleted_objects, model_format_dict, NestedObjects,
     lookup_needs_distinct)
 from django.contrib.admin.templatetags.admin_static import static
@@ -30,18 +30,19 @@ from django.db.models.sql.constants import QUERY_TERMS
 from django.forms.formsets import all_valid, DELETION_FIELD_NAME
 from django.forms.models import (modelform_factory, modelformset_factory,
     inlineformset_factory, BaseInlineFormSet, modelform_defines_fields)
+from django.forms.widgets import SelectMultiple, CheckboxSelectMultiple
 from django.http import Http404, HttpResponseRedirect
 from django.http.response import HttpResponseBase
 from django.shortcuts import get_object_or_404
 from django.template.response import SimpleTemplateResponse, TemplateResponse
 from django.utils import six
 from django.utils.decorators import method_decorator
-from django.utils.deprecation import (RenameMethodsBase,
-    RemovedInDjango18Warning, RemovedInDjango19Warning)
+from django.utils.deprecation import RemovedInDjango19Warning
 from django.utils.encoding import force_text, python_2_unicode_compatible
 from django.utils.html import escape, escapejs
 from django.utils.http import urlencode
 from django.utils.text import capfirst, get_text_list
+from django.utils.translation import string_concat
 from django.utils.translation import ugettext as _
 from django.utils.translation import ungettext
 from django.utils.safestring import mark_safe
@@ -59,7 +60,7 @@ def get_content_type_for_model(obj):
     # Since this module gets imported in the application's root package,
     # it cannot import models from other applications at the module level.
     from django.contrib.contenttypes.models import ContentType
-    return ContentType.objects.get_for_model(obj)
+    return ContentType.objects.get_for_model(obj, for_concrete_model=False)
 
 
 def get_ul_class(radio_style):
@@ -92,13 +93,7 @@ FORMFIELD_FOR_DBFIELD_DEFAULTS = {
 csrf_protect_m = method_decorator(csrf_protect)
 
 
-class RenameBaseModelAdminMethods(forms.MediaDefiningClass, RenameMethodsBase):
-    renamed_methods = (
-        ('queryset', 'get_queryset', RemovedInDjango18Warning),
-    )
-
-
-class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
+class BaseModelAdmin(six.with_metaclass(forms.MediaDefiningClass)):
     """Functionality common to both ModelAdmin and InlineAdmin."""
 
     raw_id_fields = ()
@@ -152,7 +147,6 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
             return cls.checks_class().check(cls, model, **kwargs)
 
     def __init__(self):
-        self._orig_formfield_overrides = self.formfield_overrides
         overrides = FORMFIELD_FOR_DBFIELD_DEFAULTS.copy()
         overrides.update(self.formfield_overrides)
         self.formfield_overrides = overrides
@@ -169,9 +163,6 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
         # If the field specifies choices, we don't need to look for special
         # admin widgets - we just need to use a select widget of some kind.
         if db_field.choices:
-            # see #19303 for an explanation of self._orig_formfield_overrides
-            if db_field.__class__ in self._orig_formfield_overrides:
-                kwargs = dict(self._orig_formfield_overrides[db_field.__class__], **kwargs)
             return self.formfield_for_choice_field(db_field, request, **kwargs)
 
         # ForeignKey or ManyToManyFields
@@ -258,7 +249,7 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
             })
             kwargs['empty_label'] = _('None') if db_field.blank else None
 
-        if not 'queryset' in kwargs:
+        if 'queryset' not in kwargs:
             queryset = self.get_field_queryset(db, db_field, request)
             if queryset is not None:
                 kwargs['queryset'] = queryset
@@ -282,12 +273,17 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
         elif db_field.name in (list(self.filter_vertical) + list(self.filter_horizontal)):
             kwargs['widget'] = widgets.FilteredSelectMultiple(db_field.verbose_name, (db_field.name in self.filter_vertical))
 
-        if not 'queryset' in kwargs:
+        if 'queryset' not in kwargs:
             queryset = self.get_field_queryset(db, db_field, request)
             if queryset is not None:
                 kwargs['queryset'] = queryset
 
-        return db_field.formfield(**kwargs)
+        form_field = db_field.formfield(**kwargs)
+        if isinstance(form_field.widget, SelectMultiple) and not isinstance(form_field.widget, CheckboxSelectMultiple):
+            msg = _('Hold down "Control", or "Command" on a Mac, to select more than one.')
+            help_text = form_field.help_text
+            form_field.help_text = string_concat(help_text, ' ', msg) if help_text else msg
+        return form_field
 
     def get_view_on_site_url(self, obj=None):
         if obj is None or not self.view_on_site:
@@ -328,7 +324,7 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
         """
         # We access the property and check if it triggers a warning.
         # If it does, then it's ours and we can safely ignore it, but if
-        # it doesn't then it has been overriden so we must warn about the
+        # it doesn't then it has been overridden so we must warn about the
         # deprecation.
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -477,6 +473,19 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
         codename = get_permission_codename('delete', opts)
         return request.user.has_perm("%s.%s" % (opts.app_label, codename))
 
+    def has_module_permission(self, request):
+        """
+        Returns True if the given request has any permission in the given
+        app label.
+
+        Can be overridden by the user in subclasses. In such case it should
+        return True if the given request has permission to view the module on
+        the admin index page and access the module's index page. Overriding it
+        does not restrict access to the add, change or delete views. Use
+        `ModelAdmin.has_(add|change|delete)_permission` for that.
+        """
+        return request.user.has_module_perms(self.opts.app_label)
+
 
 @python_2_unicode_compatible
 class ModelAdmin(BaseModelAdmin):
@@ -543,7 +552,7 @@ class ModelAdmin(BaseModelAdmin):
         return inline_instances
 
     def get_urls(self):
-        from django.conf.urls import patterns, url
+        from django.conf.urls import url
 
         def wrap(view):
             def wrapper(*args, **kwargs):
@@ -552,13 +561,13 @@ class ModelAdmin(BaseModelAdmin):
 
         info = self.model._meta.app_label, self.model._meta.model_name
 
-        urlpatterns = patterns('',
+        urlpatterns = [
             url(r'^$', wrap(self.changelist_view), name='%s_%s_changelist' % info),
             url(r'^add/$', wrap(self.add_view), name='%s_%s_add' % info),
             url(r'^(.+)/history/$', wrap(self.history_view), name='%s_%s_history' % info),
             url(r'^(.+)/delete/$', wrap(self.delete_view), name='%s_%s_delete' % info),
             url(r'^(.+)/$', wrap(self.change_view), name='%s_%s_change' % info),
-        )
+        ]
         return urlpatterns
 
     def urls(self):
@@ -791,8 +800,7 @@ class ModelAdmin(BaseModelAdmin):
         """
         # If self.actions is explicitly set to None that means that we don't
         # want *any* actions enabled on this page.
-        from django.contrib.admin.views.main import _is_changelist_popup
-        if self.actions is None or _is_changelist_popup(request):
+        if self.actions is None or IS_POPUP_VAR in request.GET:
             return OrderedDict()
 
         actions = []
@@ -1100,7 +1108,7 @@ class ModelAdmin(BaseModelAdmin):
             if post_url_continue is None:
                 post_url_continue = reverse('admin:%s_%s_change' %
                                             (opts.app_label, opts.model_name),
-                                            args=(pk_value,),
+                                            args=(quote(pk_value),),
                                             current_app=self.admin_site.name)
             post_url_continue = add_preserved_filters({'preserved_filters': preserved_filters, 'opts': opts}, post_url_continue)
             return HttpResponseRedirect(post_url_continue)
@@ -1699,14 +1707,15 @@ class InlineModelAdmin(BaseModelAdmin):
     """
     Options for inline editing of ``model`` instances.
 
-    Provide ``name`` to specify the attribute name of the ``ForeignKey`` from
-    ``model`` to its parent. This is required if ``model`` has more than one
-    ``ForeignKey`` to its parent.
+    Provide ``fk_name`` to specify the attribute name of the ``ForeignKey``
+    from ``model`` to its parent. This is required if ``model`` has more than
+    one ``ForeignKey`` to its parent.
     """
     model = None
     fk_name = None
     formset = BaseInlineFormSet
     extra = 3
+    min_num = None
     max_num = None
     template = None
     verbose_name = None
@@ -1739,6 +1748,10 @@ class InlineModelAdmin(BaseModelAdmin):
         """Hook for customizing the number of extra inline forms."""
         return self.extra
 
+    def get_min_num(self, request, obj=None, **kwargs):
+        """Hook for customizing the min number of inline forms."""
+        return self.min_num
+
     def get_max_num(self, request, obj=None, **kwargs):
         """Hook for customizing the max number of extra inline forms."""
         return self.max_num
@@ -1758,8 +1771,8 @@ class InlineModelAdmin(BaseModelAdmin):
             # Take the custom ModelForm's Meta.exclude into account only if the
             # InlineModelAdmin doesn't define its own.
             exclude.extend(self.form._meta.exclude)
-        # if exclude is an empty list we use None, since that's the actual
-        # default
+        # If exclude is an empty list we use None, since that's the actual
+        # default.
         exclude = exclude or None
         can_delete = self.can_delete and self.has_delete_permission(request, obj)
         defaults = {
@@ -1770,6 +1783,7 @@ class InlineModelAdmin(BaseModelAdmin):
             "exclude": exclude,
             "formfield_callback": partial(self.formfield_for_dbfield, request=request),
             "extra": self.get_extra(request, obj, **kwargs),
+            "min_num": self.get_min_num(request, obj, **kwargs),
             "max_num": self.get_max_num(request, obj, **kwargs),
             "can_delete": can_delete,
         }

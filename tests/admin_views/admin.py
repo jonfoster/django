@@ -11,10 +11,11 @@ from django.core.exceptions import ValidationError
 from django.core.files.storage import FileSystemStorage
 from django.core.mail import EmailMessage
 from django.core.servers.basehttp import FileWrapper
-from django.conf.urls import patterns, url
+from django.conf.urls import url
 from django.forms.models import BaseModelFormSet
 from django.http import HttpResponse, StreamingHttpResponse
 from django.contrib.admin import BooleanFieldListFilter
+from django.utils.safestring import mark_safe
 from django.utils.six import StringIO
 
 from .models import (Article, Chapter, Child, Parent, Picture, Widget,
@@ -34,7 +35,7 @@ from .models import (Article, Chapter, Child, Parent, Picture, Widget,
     UnchangeableObject, UserMessenger, Simple, Choice, ShortMessage, Telegram,
     FilteredManager, EmptyModelHidden, EmptyModelVisible, EmptyModelMixin,
     State, City, Restaurant, Worker, ParentWithDependentChildren,
-    DependentChild, StumpJoke)
+    DependentChild, StumpJoke, FieldOverridePost, FunkyTag)
 
 
 def callable_year(dt_value):
@@ -121,6 +122,12 @@ class ArticleAdmin(admin.ModelAdmin):
             ['to@example.com']
         ).send()
         return super(ArticleAdmin, self).save_model(request, obj, form, change)
+
+
+class ArticleAdmin2(admin.ModelAdmin):
+
+    def has_module_permission(self, request):
+        return False
 
 
 class RowLevelChangePermissionModelAdmin(admin.ModelAdmin):
@@ -215,7 +222,7 @@ class SubscriberAdmin(admin.ModelAdmin):
     def mail_admin(self, request, selected):
         EmailMessage(
             'Greetings from a ModelAdmin action',
-            'This is the test email from a admin action',
+            'This is the test email from an admin action',
             'from@example.com',
             ['to@example.com']
         ).send()
@@ -407,8 +414,8 @@ class PrePopulatedPostAdmin(admin.ModelAdmin):
 class PostAdmin(admin.ModelAdmin):
     list_display = ['title', 'public']
     readonly_fields = (
-        'posted', 'awesomeness_level', 'coolness', 'value', 'multiline',
-        lambda obj: "foo"
+        'posted', 'awesomeness_level', 'coolness', 'value',
+        'multiline', 'multiline_html', lambda obj: "foo"
     )
 
     inlines = [
@@ -419,7 +426,7 @@ class PostAdmin(admin.ModelAdmin):
         if instance.pk:
             return "%d amount of cool." % instance.pk
         else:
-            return "Unkown coolness."
+            return "Unknown coolness."
 
     def value(self, instance):
         return 1000
@@ -427,7 +434,27 @@ class PostAdmin(admin.ModelAdmin):
     def multiline(self, instance):
         return "Multiline\ntest\nstring"
 
+    def multiline_html(self, instance):
+        return mark_safe("Multiline<br>\nhtml<br>\ncontent")
+    multiline_html.allow_tags = True
+
     value.short_description = 'Value in $US'
+
+
+class FieldOverridePostForm(forms.ModelForm):
+    model = FieldOverridePost
+
+    class Meta:
+        help_texts = {
+            'posted': 'Overridden help text for the date',
+        }
+        labels = {
+            'public': 'Overridden public label',
+        }
+
+
+class FieldOverridePostAdmin(PostAdmin):
+    form = FieldOverridePostForm
 
 
 class CustomChangeList(ChangeList):
@@ -596,11 +623,11 @@ class ReportAdmin(admin.ModelAdmin):
 
     def get_urls(self):
         # Corner case: Don't call parent implementation
-        return patterns('',
+        return [
             url(r'^extra/$',
                 self.extra,
                 name='cable_extra'),
-        )
+        ]
 
 
 class CustomTemplateBooleanFieldListFilter(BooleanFieldListFilter):
@@ -800,6 +827,10 @@ class RestaurantAdmin(admin.ModelAdmin):
         return {'name': 'overridden_value'}
 
 
+class FunkyTagAdmin(admin.ModelAdmin):
+    list_display = ('name', 'content_object')
+
+
 site = admin.AdminSite(name="admin")
 site.register(Article, ArticleAdmin)
 site.register(CustomArticle, CustomArticleAdmin)
@@ -828,6 +859,7 @@ site.register(Recommender)
 site.register(Collector, CollectorAdmin)
 site.register(Category, CategoryAdmin)
 site.register(Post, PostAdmin)
+site.register(FieldOverridePost, FieldOverridePostAdmin)
 site.register(Gadget, GadgetAdmin)
 site.register(Villain)
 site.register(SuperVillain)
@@ -854,6 +886,7 @@ site.register(State, StateAdmin)
 site.register(City, CityAdmin)
 site.register(Restaurant, RestaurantAdmin)
 site.register(Worker, WorkerAdmin)
+site.register(FunkyTag, FunkyTagAdmin)
 
 # We intentionally register Promo and ChapterXtra1 but not Chapter nor ChapterXtra2.
 # That way we cover all four cases:
@@ -901,3 +934,5 @@ site.register(Group, GroupAdmin)
 site2 = admin.AdminSite(name="namespaced_admin")
 site2.register(User, UserAdmin)
 site2.register(Group, GroupAdmin)
+site7 = admin.AdminSite(name="admin7")
+site7.register(Article, ArticleAdmin2)
